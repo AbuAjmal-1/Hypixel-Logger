@@ -1,6 +1,6 @@
 please tell me bugs you can find
 
-# Hypixel-Logger
+# Hypixel Chat Logger
 Have you ever been in the sweatiest bedwars game, and your teammate gives you vital comms, but you miss his message?
   I made this for that exact reason, simply logs the messages that have been /msged|/pc and displays those in a separate window.
 
@@ -14,4 +14,6 @@ This was designed in mind for people with more than one display, however nothing
 
 <img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/eda40b39-cbd2-4936-8532-33ffe8881f92" />
 
-# How it looks with a couple messages:
+# How it will look with a couple messages:
+
+
