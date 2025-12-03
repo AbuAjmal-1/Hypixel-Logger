@@ -1,0 +1,239 @@
+import time
+import os
+import re
+import sys
+from pathlib import Path
+
+LOG_FILE = r"C:\Users\theun\.lunarclient\profiles\lunar\1.8\logs\latest.log"       #LOG LOCATION
+
+# Enable ANSI color support on Windows
+if sys.platform == 'win32':
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+
+# ANSI color codes
+RESET = '\033[0m'
+BOLD = '\033[1m'
+PINK = '\033[95m'
+YELLOW = '\033[93m'
+SHARP_YELLOW = '\033[38;5;226m'  # Sharp/bright yellow
+LIGHT_PURPLE = '\033[38;5;141m'  # Light purple
+BLUE_CHAT = '\033[38;5;26m'  # Semi-dark blue for [CHAT]
+# Rank colors
+MVP_PLUS_PLUS = '\033[38;5;196m'  # Red/Gold for MVP++
+MVP_PLUS = '\033[38;5;51m'  # Light blue/cyan
+MVP = '\033[38;5;159m'  # Light cyan
+VIP_PLUS = '\033[38;5;46m'  # Green
+VIP = '\033[38;5;46m'  # Green
+
+def clean_party_message(line):
+    """
+    Cleans up party messages in the format:
+    [CHAT] 9Party 8> x[RANK] Namef: message
+    Converts to:
+    [CHAT] PARTY [RANK] Name: message
+    """
+    # Pattern: [CHAT] 9Party 8> x[RANK] Namef: message
+    # Replace "9Party 8> x" with "PARTY " (where x is any single character)
+    line = re.sub(r'9Party 8>\s+\S\s*', 'PARTY ', line)
+    
+    # Clean up malformed ranks like [MVPf+b] -> [MVP+], [VIPf] -> [VIP]
+    # Only process brackets that look like ranks with extra characters (contain lowercase letters like 'f', 'b')
+    def clean_rank(match):
+        rank_content = match.group(1)
+        # Only process if it contains lowercase letters (indicating malformed rank like MVPf+b)
+        if re.search(r'[a-z]', rank_content):
+            # Extract the actual rank (MVP, VIP, etc.) - get the first sequence of uppercase letters
+            rank_match = re.search(r'^([A-Z]+)', rank_content)
+            if rank_match:
+                rank = rank_match.group(1)
+                # Only process known ranks
+                if rank in ['MVP', 'VIP']:
+                    # Count plus signs in the content
+                    plus_count = rank_content.count('+')
+                    # Determine the correct rank format
+                    if rank == 'MVP':
+                        if plus_count >= 2:
+                            return '[MVP++]'
+                        elif plus_count >= 1:
+                            return '[MVP+]'
+                        else:
+                            return '[MVP]'
+                    elif rank == 'VIP':
+                        if plus_count >= 1:
+                            return '[VIP+]'
+                        else:
+                            return '[VIP]'
+        # If not a malformed rank, return as is
+        return match.group(0)
+    
+    # Match rank brackets that might have extra characters (like [MVPf+b] or [VIPf])
+    # This pattern will match brackets containing letters, numbers, +, -, _, f, b
+    line = re.sub(r'\[([A-Za-z0-9+_\-fb]+)\]', clean_rank, line)
+    
+    # Remove trailing 'f' from player names (before the colon)
+    # Pattern: Namef: -> Name:
+    line = re.sub(r'([A-Za-z0-9_]+)f(\s*:)', r'\1\2', line)
+    
+    return line
+
+
+def remove_timestamp_prefix(line):
+    """
+    Removes the '[xx:xx:xx] [Client thread/INFO]:' prefix from log lines.
+    Also processes party messages to clean them up.
+    """
+    # Pattern matches [xx:xx:xx] [Client thread/INFO]:
+    pattern = r'^\[\d{2}:\d{2}:\d{2}\] \[Client thread/INFO\]:\s*'
+    line = re.sub(pattern, '', line)
+    
+    # Clean up party messages if they exist
+    if '9Party 8>' in line:
+        line = clean_party_message(line)
+    
+    return line
+
+
+def get_rank_color(rank_text):
+    """
+    Returns the appropriate color code for a rank.
+    """
+    rank_upper = rank_text.upper()
+    # Check MVP++ first (before MVP+)
+    if 'MVP++' in rank_text or 'MVP\\+\\+' in rank_text:
+        return MVP_PLUS_PLUS
+    elif 'MVP+' in rank_text or 'MVP\\+' in rank_text:
+        return MVP_PLUS
+    elif 'MVP' in rank_text:
+        return MVP
+    elif 'VIP+' in rank_text or 'VIP\\+' in rank_text:
+        return VIP_PLUS
+    elif 'VIP' in rank_text:
+        return VIP
+    return ''
+
+
+def colorize_message(line):
+    """
+    Colorizes different parts of the message:
+    - '[CHAT]' in semi-dark blue
+    - 'PARTY' in bold sharp yellow
+    - 'From' and 'To' in light purple
+    - Ranks in their colors
+    - Player names in pink
+    - Chat message in yellow
+    """
+    # Colorize "From" and "To" in light purple FIRST (before [CHAT] gets colorized)
+    # This ensures the pattern matches correctly
+    line = re.sub(r'(\[CHAT\]\s+)(From|To)(\s+)', 
+                  rf'\1{LIGHT_PURPLE}\2{RESET}\3', line)
+    
+    # Colorize [CHAT] in blue
+    line = re.sub(r'(\[CHAT\])', rf'{BLUE_CHAT}\1{RESET}', line)
+    
+    # Colorize "PARTY" in bold sharp yellow
+    line = re.sub(r'\b(PARTY)\b', rf'{BOLD}{SHARP_YELLOW}\1{RESET}', line)
+    
+    # Find and colorize rank patterns like [MVP++], [MVP+], [MVP], [VIP+], [VIP] followed by player name
+    # Pattern: [RANK] Name: (case-insensitive, handles ++ and +)
+    rank_pattern = r'(\[[A-Z]+\+*\])\s+([A-Za-z0-9_]+)(\s*:)'
+    
+    def replace_rank(match):
+        rank = match.group(1)
+        name = match.group(2)
+        colon = match.group(3)
+        rank_color = get_rank_color(rank)
+        return f'{rank_color}{rank}{RESET} {PINK}{name}{RESET}{colon}'
+    
+    line = re.sub(rank_pattern, replace_rank, line, flags=re.IGNORECASE)
+    
+    # Colorize the actual message (everything after the last colon that's not part of a rank/name)
+    # We need to be careful not to colorize colons that are part of the structure
+    # Find the last colon that's followed by actual message content
+    colon_pos = line.rfind(':')
+    if colon_pos != -1 and colon_pos < len(line) - 1:
+        # Check if there's content after the colon
+        after_colon = line[colon_pos + 1:].strip()
+        if after_colon:  # Only colorize if there's actual message content
+            before_colon = line[:colon_pos + 1]
+            message = line[colon_pos + 1:]
+            line = before_colon + YELLOW + message + RESET
+    
+    return line
+
+
+def monitor_chat_log():
+    """
+    Continuously monitors the log file and displays lines containing:
+    - '9Party 8>'
+    - '[CHAT] To'
+    - '[CHAT] From'
+    """
+    print("Chat Monitor Started")
+    print("=" * 60)
+    print(f"Monitoring: {LOG_FILE}")
+    print("=" * 60)
+    print("Press Ctrl+C to stop\n")
+    
+    # Track the last position in the file to only read new content
+    last_position = 0
+    
+    # If file doesn't exist yet, wait for it
+    if not os.path.exists(LOG_FILE):
+        print(f"Waiting for log file to be created...")
+        while not os.path.exists(LOG_FILE):
+            time.sleep(1)
+        print("Log file found! Starting monitoring...\n")
+    
+    try:
+        while True:
+            try:
+                # Open file and seek to last position
+                with open(LOG_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+                    # If file was truncated or recreated, reset position
+                    current_size = os.path.getsize(LOG_FILE)
+                    if current_size < last_position:
+                        last_position = 0
+                    
+                    f.seek(last_position)
+                    
+                    # Read new lines
+                    new_lines = f.readlines()
+                    last_position = f.tell()
+                    
+                    # Filter and display lines containing any of the specified patterns
+                    for line in new_lines:
+                        line_upper = line.upper()
+                        # Check for "9Party 8>" (case-insensitive)
+                        # Check for "[CHAT] To " (case-sensitive, capital To with space)
+                        # Check for "[CHAT] From " (case-sensitive, capital From with space)
+                        if ("9PARTY 8>" in line_upper or 
+                            "[CHAT] To " in line or 
+                            "[CHAT] From " in line):
+                            # Remove timestamp prefix
+                            cleaned_line = remove_timestamp_prefix(line.rstrip())
+                            # Colorize the message
+                            colored_line = colorize_message(cleaned_line)
+                            print(colored_line)
+                
+                # Small delay to avoid excessive CPU usage
+                time.sleep(0.1)
+                
+            except FileNotFoundError:
+                print("Log file not found. Waiting...")
+                time.sleep(1)
+                last_position = 0
+            except PermissionError:
+                print("Permission denied. Waiting...")
+                time.sleep(1)
+            except Exception as e:
+                print(f"Error reading file: {e}")
+                time.sleep(1)
+                
+    except KeyboardInterrupt:
+        print("\n\nChat Monitor Stopped")
+
+if __name__ == "__main__":
+    monitor_chat_log()
+
